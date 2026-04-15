@@ -1,0 +1,93 @@
+name: Distribute EditorConfig
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .editorconfig
+      - .gitattributes
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  distribute:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate GitHub App Token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Distribute EditorConfig to Repositories
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          SOURCE_REPO: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          BRANCH_NAME="update/cs-editorconfig-${COMMIT_SHA:0:7}"
+
+          # Get list of repositories where the app is installed, excluding this source repo
+          repos=$(gh api /installation/repositories --paginate \
+            --jq '.repositories[].full_name' | \
+            grep -v "^${SOURCE_REPO}$" || true)
+
+          if [ -z "$repos" ]; then
+            echo "No repositories to update."
+            exit 0
+          fi
+
+          while IFS= read -r repo; do
+            echo "::group::Processing $repo"
+
+            tmpdir=$(mktemp -d)
+
+            gh repo clone "$repo" "$tmpdir" -- --depth=1 --single-branch
+
+            pushd "$tmpdir" > /dev/null
+
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+
+            git checkout -b "$BRANCH_NAME"
+
+            cp "$GITHUB_WORKSPACE/.editorconfig" .editorconfig
+            cp "$GITHUB_WORKSPACE/.gitattributes" .gitattributes
+
+            git add .editorconfig .gitattributes
+
+            if git diff --cached --quiet; then
+              echo "No changes in $repo, skipping."
+              popd > /dev/null
+              rm -rf "$tmpdir"
+              echo "::endgroup::"
+              continue
+            fi
+
+            git commit -m "chore: update cs-editorconfig"
+            git push origin "$BRANCH_NAME"
+
+            gh pr create \
+              --repo "$repo" \
+              --base main \
+              --head "$BRANCH_NAME" \
+              --title "chore: update cs-editorconfig" \
+              --body "Automated update of \`.editorconfig\` and \`.gitattributes\` from [cs-editorconfig](https://github.com/${SOURCE_REPO})." \
+              || echo "PR may already exist for $repo, skipping."
+
+            popd > /dev/null
+            rm -rf "$tmpdir"
+
+            echo "::endgroup::"
+          done <<< "$repos"
