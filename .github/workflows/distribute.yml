@@ -67,6 +67,11 @@ jobs:
 
             git add .editorconfig .gitattributes
 
+            # Remove the per-repo update workflow now that the GitHub App handles distribution
+            if [ -f ".github/workflows/update-stream.yml" ]; then
+              git rm ".github/workflows/update-stream.yml"
+            fi
+
             if git diff --cached --quiet; then
               echo "No changes in $repo, skipping."
               popd > /dev/null
@@ -83,7 +88,9 @@ jobs:
               --base main \
               --head "$BRANCH_NAME" \
               --title "chore: update cs-editorconfig" \
-              --body "Automated update of \`.editorconfig\` and \`.gitattributes\` from [cs-editorconfig](https://github.com/${SOURCE_REPO})." \
+              --body "Automated update of \`.editorconfig\` and \`.gitattributes\` from [cs-editorconfig](https://github.com/${SOURCE_REPO}).
+
+\`.github/workflows/update-stream.yml\` has been removed as updates are now distributed automatically by the GitHub App." \
               || echo "PR may already exist for $repo, skipping."
 
             popd > /dev/null
