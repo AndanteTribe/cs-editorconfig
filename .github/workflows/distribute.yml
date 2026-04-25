@@ -1,11 +1,5 @@
 name: Distribute EditorConfig
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - .editorconfig
-      - .gitattributes
   workflow_dispatch: {}
 
 concurrency:
@@ -26,7 +20,7 @@ jobs:
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
+          owner: ${{ vars.APP_OWNER || github.repository_owner }}
 
       - name: Distribute EditorConfig to Repositories
         env:
