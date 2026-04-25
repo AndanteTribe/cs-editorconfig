@@ -7,10 +7,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  setup:
+    runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      owners: ${{ steps.set-owners.outputs.owners }}
+    steps:
+      - name: Build owner matrix
+        id: set-owners
+        env:
+          APP_OWNER: ${{ vars.APP_OWNER }}
+          DEFAULT_OWNER: ${{ github.repository_owner }}
+        run: |
+          raw="${APP_OWNER:-$DEFAULT_OWNER}"
+          # Split on commas, trim whitespace, drop empty entries, encode as JSON array
+          json=$(echo "$raw" \
+            | tr ',' '\n' \
+            | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+            | grep -v '^$' \
+            | jq -R . \
+            | jq -sc .)
+          echo "owners=$json" >> "$GITHUB_OUTPUT"
+
   distribute:
+    needs: setup
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        owner: ${{ fromJson(needs.setup.outputs.owners) }}
     steps:
       - uses: actions/checkout@v6
 
@@ -20,7 +47,7 @@ jobs:
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.PRIVATE_KEY }}
-          owner: ${{ vars.APP_OWNER || github.repository_owner }}
+          owner: ${{ matrix.owner }}
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
