@@ -12,18 +12,18 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Generate GitHub App Token
         id: app-token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.PRIVATE_KEY }}
           owner: ${{ vars.APP_OWNER || github.repository_owner }}
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.x'
 
