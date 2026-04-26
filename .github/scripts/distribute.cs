@@ -6,14 +6,6 @@ using System.Text;
 using System.Threading.Tasks;
 using Octokit;
 
-static class FilePaths
-{
-    public const string EditorConfig = ".editorconfig";
-    public const string GitAttributes = ".gitattributes";
-    public const string UpdateStream = ".github/workflows/update-stream.yml";
-    public const string BranchPrefix = "feature/update-editorconfig-";
-}
-
 var token = Environment.GetEnvironmentVariable("GH_TOKEN")
     ?? throw new InvalidOperationException("GH_TOKEN is not set.");
 var sourceRepo = Environment.GetEnvironmentVariable("SOURCE_REPO")
@@ -211,4 +203,12 @@ static async Task<string?> TryGetFileSha(
     {
         return null;
     }
+}
+
+static class FilePaths
+{
+    public const string EditorConfig = ".editorconfig";
+    public const string GitAttributes = ".gitattributes";
+    public const string UpdateStream = ".github/workflows/update-stream.yml";
+    public const string BranchPrefix = "feature/update-editorconfig-";
 }
