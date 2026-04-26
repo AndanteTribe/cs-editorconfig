@@ -2,17 +2,8 @@
 
 using System;
 using System.IO;
-using System.Text;
 using System.Threading.Tasks;
 using Octokit;
-
-static class FilePaths
-{
-    public const string EditorConfig = ".editorconfig";
-    public const string GitAttributes = ".gitattributes";
-    public const string UpdateStream = ".github/workflows/update-stream.yml";
-    public const string BranchPrefix = "feature/update-editorconfig-";
-}
 
 var token = Environment.GetEnvironmentVariable("GH_TOKEN")
     ?? throw new InvalidOperationException("GH_TOKEN is not set.");
@@ -72,11 +63,10 @@ static async Task ProcessRepositoryWithLogging(
     {
         await ProcessRepository(client, repo, branchName, editorConfigContent, gitAttributesContent, sourceRepo);
     }
-    catch (Exception ex)
+    finally
     {
-        Console.Error.WriteLine("Failed to process " + repo.FullName + ": " + ex.Message);
+        Console.WriteLine("::endgroup::");
     }
-    Console.WriteLine("::endgroup::");
 }
 
 static async Task ProcessRepository(
@@ -110,51 +100,51 @@ static async Task ProcessRepository(
         return;
     }
 
-    var newTreeRequest = new NewTree { BaseTree = baseCommit.Tree.Sha };
+    var headCommitSha = baseSha;
 
-    if (editorConfigChanged)
+    if (editorConfigChanged || gitAttributesChanged)
     {
-        newTreeRequest.Tree.Add(new NewTreeItem
-        {
-            Path = FilePaths.EditorConfig,
-            Mode = "100644",
-            Type = TreeType.Blob,
-            Content = editorConfigContent
-        });
-    }
+        var newTreeRequest = new NewTree { BaseTree = baseCommit.Tree.Sha };
 
-    if (gitAttributesChanged)
-    {
-        newTreeRequest.Tree.Add(new NewTreeItem
+        if (editorConfigChanged)
         {
-            Path = FilePaths.GitAttributes,
-            Mode = "100644",
-            Type = TreeType.Blob,
-            Content = gitAttributesContent
-        });
-    }
+            newTreeRequest.Tree.Add(new NewTreeItem
+            {
+                Path = FilePaths.EditorConfig,
+                Mode = "100644",
+                Type = TreeType.Blob,
+                Content = editorConfigContent
+            });
+        }
 
-    if (updateStreamExists)
-    {
-        // Setting Sha = null on an existing path removes the file from the tree
-        newTreeRequest.Tree.Add(new NewTreeItem
+        if (gitAttributesChanged)
         {
-            Path = FilePaths.UpdateStream,
-            Mode = "100644",
-            Type = TreeType.Blob,
-            Sha = null
-        });
-    }
+            newTreeRequest.Tree.Add(new NewTreeItem
+            {
+                Path = FilePaths.GitAttributes,
+                Mode = "100644",
+                Type = TreeType.Blob,
+                Content = gitAttributesContent
+            });
+        }
 
-    var newTree = await client.Git.Tree.Create(owner, name, newTreeRequest);
-    var newCommit = await client.Git.Commit.Create(owner, name, new NewCommit(
-        "chore: update cs-editorconfig",
-        newTree.Sha,
-        new[] { baseSha }));
+        var newTree = await client.Git.Tree.Create(owner, name, newTreeRequest);
+        var newCommit = await client.Git.Commit.Create(owner, name, new NewCommit(
+            "chore: update cs-editorconfig",
+            newTree.Sha,
+            new[] { baseSha }));
+        headCommitSha = newCommit.Sha;
+    }
 
     await client.Git.Reference.Create(owner, name, new NewReference(
         "refs/heads/" + branchName,
-        newCommit.Sha));
+        headCommitSha));
+
+    if (updateStreamExists)
+    {
+        await client.Repository.Content.DeleteFile(owner, name, FilePaths.UpdateStream,
+            new DeleteFileRequest("chore: remove update-stream.yml workflow", updateStreamSha!, branchName));
+    }
 
     var prBody = $"""
         Automated update of `.editorconfig` and `.gitattributes` from [cs-editorconfig](https://github.com/{sourceRepo}).
@@ -162,21 +152,14 @@ static async Task ProcessRepository(
         `.github/workflows/update-stream.yml` has been removed as updates are now distributed automatically by the GitHub App.
         """;
 
-    try
+    await client.PullRequest.Create(owner, name, new NewPullRequest(
+        "chore: update cs-editorconfig",
+        branchName,
+        repo.DefaultBranch)
     {
-        await client.PullRequest.Create(owner, name, new NewPullRequest(
-            "chore: update cs-editorconfig",
-            branchName,
-            repo.DefaultBranch)
-        {
-            Body = prBody
-        });
-        Console.WriteLine("Created PR in " + repo.FullName);
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine("PR may already exist for " + repo.FullName + ": " + ex.Message);
-    }
+        Body = prBody
+    });
+    Console.WriteLine("Created PR in " + repo.FullName);
 }
 
 static async Task<(string? Content, string? Sha)> TryGetFileContent(
@@ -187,11 +170,7 @@ static async Task<(string? Content, string? Sha)> TryGetFileContent(
         var contents = await client.Repository.Content.GetAllContents(owner, repo, path);
         if (contents.Count == 0) return (null, null);
         var file = contents[0];
-        var content = file.Encoding == "base64"
-            ? Encoding.UTF8.GetString(Convert.FromBase64String(
-                file.Content.Replace("\r", "").Replace("\n", "")))
-            : file.Content;
-        return (content, file.Sha);
+        return (file.Content, file.Sha);
     }
     catch (NotFoundException)
     {
@@ -211,4 +190,12 @@ static async Task<string?> TryGetFileSha(
     {
         return null;
     }
+}
+
+static class FilePaths
+{
+    public const string EditorConfig = ".editorconfig";
+    public const string GitAttributes = ".gitattributes";
+    public const string UpdateStream = ".github/workflows/update-stream.yml";
+    public const string BranchPrefix = "feature/update-editorconfig-";
 }
