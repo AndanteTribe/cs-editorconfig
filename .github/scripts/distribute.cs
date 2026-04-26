@@ -2,7 +2,6 @@
 
 using System;
 using System.IO;
-using System.Text;
 using System.Threading.Tasks;
 using Octokit;
 
@@ -179,18 +178,9 @@ static async Task<(string? Content, string? Sha)> TryGetFileContent(
         var contents = await client.Repository.Content.GetAllContents(owner, repo, path);
         if (contents.Count == 0) return (null, null);
         var file = contents[0];
-        if (file.Content is null) return (null, null);
-        var content = file.Encoding == "base64"
-            ? Encoding.UTF8.GetString(Convert.FromBase64String(
-                file.Content.Replace("\r", "").Replace("\n", "")))
-            : file.Content;
-        return (content, file.Sha);
+        return (file.Content, file.Sha);
     }
     catch (NotFoundException)
-    {
-        return (null, null);
-    }
-    catch (FormatException)
     {
         return (null, null);
     }
