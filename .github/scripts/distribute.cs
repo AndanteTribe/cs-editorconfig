@@ -152,14 +152,14 @@ static async Task ProcessRepository(
         `.github/workflows/update-stream.yml` has been removed as updates are now distributed automatically by the GitHub App.
         """;
 
-    await client.PullRequest.Create(owner, name, new NewPullRequest(
+    var pr = await client.PullRequest.Create(owner, name, new NewPullRequest(
         "chore: update cs-editorconfig",
         branchName,
         repo.DefaultBranch)
     {
         Body = prBody
     });
-    Console.WriteLine("Created PR in " + repo.FullName);
+    Console.WriteLine($"Created PR in {repo.FullName} ({pr.HtmlUrl})");
 }
 
 static async Task<(string? Content, string? Sha)> TryGetFileContent(
