@@ -1,0 +1,40 @@
+name: Distribute EditorConfig
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  distribute:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # APP_OWNER must be a JSON array, e.g. ["OrgA","OrgB"]. Falls back to the repo owner when not set.
+        owner: ${{ fromJson(vars.APP_OWNER || format('["{0}"]', github.repository_owner)) }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Generate GitHub App Token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.PRIVATE_KEY }}
+          owner: ${{ matrix.owner }}
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.x'
+
+      - name: Distribute EditorConfig to Repositories
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          SOURCE_REPO: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: dotnet run .github/scripts/distribute.cs -c Release
