@@ -65,9 +65,13 @@ static async Task ProcessRepositoryWithLogging(
     }
     catch (Exception ex)
     {
-        Console.Error.WriteLine("Failed to process " + repo.FullName + ": " + ex.Message);
+        Console.Error.WriteLine("Failed to process " + repo.FullName + ": " + ex);
+        throw;
     }
-    Console.WriteLine("::endgroup::");
+    finally
+    {
+        Console.WriteLine("::endgroup::");
+    }
 }
 
 static async Task ProcessRepository(
@@ -101,51 +105,51 @@ static async Task ProcessRepository(
         return;
     }
 
-    var newTreeRequest = new NewTree { BaseTree = baseCommit.Tree.Sha };
+    var headCommitSha = baseSha;
 
-    if (editorConfigChanged)
+    if (editorConfigChanged || gitAttributesChanged)
     {
-        newTreeRequest.Tree.Add(new NewTreeItem
-        {
-            Path = FilePaths.EditorConfig,
-            Mode = "100644",
-            Type = TreeType.Blob,
-            Content = editorConfigContent
-        });
-    }
+        var newTreeRequest = new NewTree { BaseTree = baseCommit.Tree.Sha };
 
-    if (gitAttributesChanged)
-    {
-        newTreeRequest.Tree.Add(new NewTreeItem
+        if (editorConfigChanged)
         {
-            Path = FilePaths.GitAttributes,
-            Mode = "100644",
-            Type = TreeType.Blob,
-            Content = gitAttributesContent
-        });
-    }
+            newTreeRequest.Tree.Add(new NewTreeItem
+            {
+                Path = FilePaths.EditorConfig,
+                Mode = "100644",
+                Type = TreeType.Blob,
+                Content = editorConfigContent
+            });
+        }
 
-    if (updateStreamExists)
-    {
-        // Setting Sha = null on an existing path removes the file from the tree
-        newTreeRequest.Tree.Add(new NewTreeItem
+        if (gitAttributesChanged)
         {
-            Path = FilePaths.UpdateStream,
-            Mode = "100644",
-            Type = TreeType.Blob,
-            Sha = null
-        });
-    }
+            newTreeRequest.Tree.Add(new NewTreeItem
+            {
+                Path = FilePaths.GitAttributes,
+                Mode = "100644",
+                Type = TreeType.Blob,
+                Content = gitAttributesContent
+            });
+        }
 
-    var newTree = await client.Git.Tree.Create(owner, name, newTreeRequest);
-    var newCommit = await client.Git.Commit.Create(owner, name, new NewCommit(
-        "chore: update cs-editorconfig",
-        newTree.Sha,
-        new[] { baseSha }));
+        var newTree = await client.Git.Tree.Create(owner, name, newTreeRequest);
+        var newCommit = await client.Git.Commit.Create(owner, name, new NewCommit(
+            "chore: update cs-editorconfig",
+            newTree.Sha,
+            new[] { baseSha }));
+        headCommitSha = newCommit.Sha;
+    }
 
     await client.Git.Reference.Create(owner, name, new NewReference(
         "refs/heads/" + branchName,
-        newCommit.Sha));
+        headCommitSha));
+
+    if (updateStreamExists)
+    {
+        await client.Repository.Content.DeleteFile(owner, name, FilePaths.UpdateStream,
+            new DeleteFileRequest("chore: remove update-stream.yml workflow", updateStreamSha!, branchName));
+    }
 
     var prBody = $"""
         Automated update of `.editorconfig` and `.gitattributes` from [cs-editorconfig](https://github.com/{sourceRepo}).
@@ -164,9 +168,9 @@ static async Task ProcessRepository(
         });
         Console.WriteLine("Created PR in " + repo.FullName);
     }
-    catch (Exception ex)
+    catch (ApiValidationException)
     {
-        Console.WriteLine("PR may already exist for " + repo.FullName + ": " + ex.Message);
+        Console.WriteLine("PR may already exist for " + repo.FullName);
     }
 }
 
