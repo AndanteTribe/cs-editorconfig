@@ -63,11 +63,6 @@ static async Task ProcessRepositoryWithLogging(
     {
         await ProcessRepository(client, repo, branchName, editorConfigContent, gitAttributesContent, sourceRepo);
     }
-    catch (Exception ex)
-    {
-        Console.Error.WriteLine("Failed to process " + repo.FullName + ": " + ex);
-        throw;
-    }
     finally
     {
         Console.WriteLine("::endgroup::");
@@ -157,21 +152,14 @@ static async Task ProcessRepository(
         `.github/workflows/update-stream.yml` has been removed as updates are now distributed automatically by the GitHub App.
         """;
 
-    try
+    await client.PullRequest.Create(owner, name, new NewPullRequest(
+        "chore: update cs-editorconfig",
+        branchName,
+        repo.DefaultBranch)
     {
-        await client.PullRequest.Create(owner, name, new NewPullRequest(
-            "chore: update cs-editorconfig",
-            branchName,
-            repo.DefaultBranch)
-        {
-            Body = prBody
-        });
-        Console.WriteLine("Created PR in " + repo.FullName);
-    }
-    catch (ApiValidationException)
-    {
-        Console.WriteLine("PR may already exist for " + repo.FullName);
-    }
+        Body = prBody
+    });
+    Console.WriteLine("Created PR in " + repo.FullName);
 }
 
 static async Task<(string? Content, string? Sha)> TryGetFileContent(
