@@ -25,10 +25,15 @@ var client = new GitHubClient(new ProductHeaderValue("cs-editorconfig-distributo
     Credentials = new Credentials(token)
 };
 
-var editorConfigContent = await File.ReadAllTextAsync(Path.Combine(workspace, FilePaths.EditorConfig));
-var gitAttributesContent = await File.ReadAllTextAsync(Path.Combine(workspace, FilePaths.GitAttributes));
+var readEditorConfigTask = File.ReadAllTextAsync(Path.Combine(workspace, FilePaths.EditorConfig));
+var readGitAttributesTask = File.ReadAllTextAsync(Path.Combine(workspace, FilePaths.GitAttributes));
+var getInstallationReposTask = client.GitHubApps.Installation.GetAllRepositoriesForCurrent();
 
-var installationRepos = await client.GitHubApps.Installation.GetAllRepositoriesForCurrent();
+await Task.WhenAll(readEditorConfigTask, readGitAttributesTask, getInstallationReposTask);
+
+var editorConfigContent = await readEditorConfigTask;
+var gitAttributesContent = await readGitAttributesTask;
+var installationRepos = await getInstallationReposTask;
 var changed = false;
 var tasks = new List<Task>();
 
@@ -82,11 +87,18 @@ static async Task ProcessRepository(
 
     var baseRef = await client.Git.Reference.Get(owner, name, "heads/" + repo.DefaultBranch);
     var baseSha = baseRef.Object.Sha;
-    var baseCommit = await client.Git.Commit.Get(owner, name, baseSha);
+    var baseCommitTask = client.Git.Commit.Get(owner, name, baseSha);
 
-    var (currentEditorConfig, _) = await TryGetFileContent(client, owner, name, FilePaths.EditorConfig);
-    var (currentGitAttributes, _) = await TryGetFileContent(client, owner, name, FilePaths.GitAttributes);
-    var updateStreamSha = await TryGetFileSha(client, owner, name, FilePaths.UpdateStream);
+    var currentEditorConfigTask = TryGetFileContent(client, owner, name, FilePaths.EditorConfig);
+    var currentGitAttributesTask = TryGetFileContent(client, owner, name, FilePaths.GitAttributes);
+    var updateStreamShaTask = TryGetFileSha(client, owner, name, FilePaths.UpdateStream);
+
+    await Task.WhenAll(baseCommitTask, currentEditorConfigTask, currentGitAttributesTask, updateStreamShaTask);
+
+    var baseCommit = await baseCommitTask;
+    var (currentEditorConfig, _) = await currentEditorConfigTask;
+    var (currentGitAttributes, _) = await currentGitAttributesTask;
+    var updateStreamSha = await updateStreamShaTask;
 
     var editorConfigChanged = currentEditorConfig is null
         || !editorConfigContent.AsSpan().SequenceEqual(currentEditorConfig.AsSpan());
