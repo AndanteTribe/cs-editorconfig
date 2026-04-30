@@ -85,14 +85,13 @@ static async Task ProcessRepository(
     var owner = repo.Owner.Login;
     var name = repo.Name;
 
-    var baseRefTask = client.Git.Reference.Get(owner, name, "heads/" + repo.DefaultBranch);
+    var baseRef = await client.Git.Reference.Get(owner, name, "heads/" + repo.DefaultBranch);
+    var baseSha = baseRef.Object.Sha;
+    var baseCommitTask = client.Git.Commit.Get(owner, name, baseSha);
+
     var currentEditorConfigTask = TryGetFileContent(client, owner, name, FilePaths.EditorConfig);
     var currentGitAttributesTask = TryGetFileContent(client, owner, name, FilePaths.GitAttributes);
     var updateStreamShaTask = TryGetFileSha(client, owner, name, FilePaths.UpdateStream);
-
-    var baseRef = await baseRefTask;
-    var baseSha = baseRef.Object.Sha;
-    var baseCommitTask = client.Git.Commit.Get(owner, name, baseSha);
 
     await Task.WhenAll(baseCommitTask, currentEditorConfigTask, currentGitAttributesTask, updateStreamShaTask);
 
