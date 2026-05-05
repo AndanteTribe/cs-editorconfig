@@ -2,6 +2,7 @@
 
 using System;
 using System.IO;
+using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using Octokit;
 
@@ -13,6 +14,7 @@ var commitSha = Environment.GetEnvironmentVariable("COMMIT_SHA")
     ?? throw new InvalidOperationException("COMMIT_SHA is not set.");
 var workspace = Environment.GetEnvironmentVariable("GITHUB_WORKSPACE")
     ?? throw new InvalidOperationException("GITHUB_WORKSPACE is not set.");
+var targetReposJson = Environment.GetEnvironmentVariable("TARGET_REPOS");
 
 var branchName = string.Create(FilePaths.BranchPrefix.Length + 7, commitSha, static (span, sha) =>
 {
@@ -27,17 +29,50 @@ var client = new GitHubClient(new ProductHeaderValue("cs-editorconfig-distributo
 
 var readEditorConfigTask = File.ReadAllTextAsync(Path.Combine(workspace, FilePaths.EditorConfig));
 var readGitAttributesTask = File.ReadAllTextAsync(Path.Combine(workspace, FilePaths.GitAttributes));
-var getInstallationReposTask = client.GitHubApps.Installation.GetAllRepositoriesForCurrent();
 
-await Task.WhenAll(readEditorConfigTask, readGitAttributesTask, getInstallationReposTask);
+IReadOnlyList<Repository> reposToProcess;
+
+if (targetReposJson is not null)
+{
+    JsonArray nodes;
+    try
+    {
+        nodes = JsonNode.Parse(targetReposJson)?.AsArray()
+            ?? throw new InvalidOperationException("TARGET_REPOS must be a JSON array.");
+    }
+    catch (System.Text.Json.JsonException ex)
+    {
+        throw new InvalidOperationException("TARGET_REPOS contains invalid JSON.", ex);
+    }
+
+    var repoFetchTasks = nodes
+        .Select((n, i) =>
+        {
+            var fullName = n?["full_name"]?.GetValue<string>()
+                ?? throw new InvalidOperationException($"TARGET_REPOS entry at index {i} is missing the 'full_name' field.");
+            var slash = fullName.IndexOf('/');
+            return client.Repository.Get(fullName[..slash], fullName[(slash + 1)..]);
+        })
+        .ToList();
+
+    var allTasks = new List<Task> { readEditorConfigTask, readGitAttributesTask };
+    allTasks.AddRange(repoFetchTasks);
+    await Task.WhenAll(allTasks);
+    reposToProcess = repoFetchTasks.Select(t => t.Result).ToList();
+}
+else
+{
+    var getInstallationReposTask = client.GitHubApps.Installation.GetAllRepositoriesForCurrent();
+    await Task.WhenAll(readEditorConfigTask, readGitAttributesTask, getInstallationReposTask);
+    reposToProcess = getInstallationReposTask.Result.Repositories;
+}
 
 var editorConfigContent = await readEditorConfigTask;
 var gitAttributesContent = await readGitAttributesTask;
-var installationRepos = await getInstallationReposTask;
 var changed = false;
 var tasks = new List<Task>();
 
-foreach (var repo in installationRepos.Repositories)
+foreach (var repo in reposToProcess)
 {
     if (repo.FullName == sourceRepo)
     {
@@ -158,11 +193,15 @@ static async Task ProcessRepository(
             new DeleteFileRequest("chore: remove update-stream.yml workflow", updateStreamSha!, branchName));
     }
 
-    var prBody = $"""
-        Automated update of `.editorconfig` and `.gitattributes` from [cs-editorconfig](https://github.com/{sourceRepo}).
+    var prBody = updateStreamExists
+        ? $"""
+            Automated update of `.editorconfig` and `.gitattributes` from [cs-editorconfig](https://github.com/{sourceRepo}).
 
-        `.github/workflows/update-stream.yml` has been removed as updates are now distributed automatically by the GitHub App.
-        """;
+            `.github/workflows/update-stream.yml` has been removed as updates are now distributed automatically by the GitHub App.
+            """
+        : $"""
+            Automated update of `.editorconfig` and `.gitattributes` from [cs-editorconfig](https://github.com/{sourceRepo}).
+            """;
 
     var pr = await client.PullRequest.Create(owner, name, new NewPullRequest(
         "chore: update cs-editorconfig",

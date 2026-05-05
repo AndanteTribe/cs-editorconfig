@@ -1,0 +1,37 @@
+name: Auto Distribute on New Installation
+on:
+  installation_repositories:
+    types: [added]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.installation.id }}
+  cancel-in-progress: false
+
+jobs:
+  distribute:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Generate GitHub App Token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.BOT_CLIENT_ID }}
+          private-key: ${{ secrets.PRIVATE_KEY }}
+          owner: ${{ github.event.installation.account.login }}
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.x'
+
+      - name: Distribute EditorConfig to New Repositories
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          SOURCE_REPO: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+          TARGET_REPOS: ${{ toJson(github.event.repositories_added) }}
+        run: dotnet run .github/scripts/Distribute.cs -c Release
