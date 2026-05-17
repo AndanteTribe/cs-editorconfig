@@ -37,3 +37,171 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           SOURCE_REPO: ${{ github.repository }}
         run: dotnet run .github/scripts/Format.cs -c Release
+
+      - name: Upload Unity repos list
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-repos-${{ matrix.owner }}
+          path: unity-repos.json
+          if-no-files-found: ignore
+
+  collect-unity-repos:
+    needs: format
+    runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      repos: ${{ steps.collect.outputs.repos }}
+    steps:
+      - name: Download Unity repos artifacts
+        uses: actions/download-artifact@v4.3.0
+        with:
+          pattern: unity-repos-*
+          path: artifacts
+          merge-multiple: false
+        continue-on-error: true
+
+      - name: Collect Unity repos
+        id: collect
+        run: |
+          if find artifacts -name "unity-repos.json" -type f 2>/dev/null | grep -q .; then
+            repos=$(find artifacts -name "unity-repos.json" -type f | xargs jq -sc 'add // []')
+          else
+            repos='[]'
+          fi
+          echo "repos=$repos" >> $GITHUB_OUTPUT
+
+  format-unity:
+    needs: collect-unity-repos
+    if: needs.collect-unity-repos.outputs.repos != '' && needs.collect-unity-repos.outputs.repos != '[]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        repo: ${{ fromJson(needs.collect-unity-repos.outputs.repos) }}
+    steps:
+      - name: Generate GitHub App Token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.BOT_CLIENT_ID }}
+          private-key: ${{ secrets.PRIVATE_KEY }}
+          owner: ${{ matrix.repo.owner }}
+
+      - name: Clone repository
+        env:
+          TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          git clone --depth=1 \
+            "https://x-access-token:${TOKEN}@github.com/${{ matrix.repo.owner }}/${{ matrix.repo.name }}.git" \
+            .
+
+      - name: Inject Unity project file generator script
+        run: |
+          PROJECT_PATH="${{ matrix.repo.unityProjectPath }}"
+          SCRIPT_DIR="${PROJECT_PATH:+${PROJECT_PATH}/}Assets/Editor"
+          mkdir -p "$SCRIPT_DIR"
+          cat > "$SCRIPT_DIR/CsEditorconfigFormat.cs" << 'UNITY_SCRIPT'
+          using System.IO;
+          using UnityEditor;
+
+          /// <summary>
+          /// Temporary script injected by cs-editorconfig to generate project files for dotnet format.
+          /// This file is not committed to the repository.
+          /// </summary>
+          public class CsEditorconfigFormat
+          {
+              public static void SyncSolution()
+              {
+                  AssetDatabase.Refresh();
+                  // SyncVS.SyncSolution() is deprecated since Unity 2020.2 in favour of the
+                  // Code Editor package APIs (e.g. Unity.CodeEditor.CodeEditor.CurrentEditor.SyncAll()),
+                  // but those require an optional IDE-integration package to be installed.
+                  // SyncVS.SyncSolution() remains available in all supported Unity versions and does
+                  // not depend on any optional package, making it the most portable choice here.
+          #pragma warning disable CS0618
+                  SyncVS.SyncSolution();
+          #pragma warning restore CS0618
+                  // Create a placeholder build output expected by game-ci/unity-builder.
+                  var buildPath = Path.Combine(Path.GetDirectoryName(Application.dataPath)!, "build");
+                  Directory.CreateDirectory(buildPath);
+                  File.WriteAllText(Path.Combine(buildPath, ".keep"), string.Empty);
+                  EditorApplication.Exit(0);
+              }
+          }
+          UNITY_SCRIPT
+
+      - name: Generate Unity project files
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: ${{ matrix.repo.unityProjectPath || '.' }}
+          unityVersion: auto
+          targetPlatform: StandaloneLinux64
+          buildMethod: CsEditorconfigFormat.SyncSolution
+          buildsPath: ${{ matrix.repo.unityProjectPath && format('{0}/build', matrix.repo.unityProjectPath) || 'build' }}
+          versioning: None
+          allowDirtyBuild: true
+
+      - name: Remove Unity project file generator script
+        if: always()
+        run: |
+          PROJECT_PATH="${{ matrix.repo.unityProjectPath }}"
+          rm -f "${PROJECT_PATH:+${PROJECT_PATH}/}Assets/Editor/CsEditorconfigFormat.cs"
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.x'
+
+      - name: Verify dotnet format
+        id: verify
+        run: |
+          PROJECT="${{ matrix.repo.unityProjectPath }}"
+          dotnet format "${PROJECT:-.}" --verify-no-changes
+        continue-on-error: true
+
+      - name: Apply dotnet format
+        if: steps.verify.outcome == 'failure'
+        run: |
+          PROJECT="${{ matrix.repo.unityProjectPath }}"
+          dotnet format "${PROJECT:-.}"
+
+      - name: Create pull request
+        if: steps.verify.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          SOURCE_REPO: ${{ github.repository }}
+        run: |
+          BRANCH="feature/dotnet-format-$(date -u +%Y%m%d%H%M%S)"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+
+          CHANGED=$(git diff --name-only | grep '\.cs$' || true)
+
+          if [ -z "$CHANGED" ]; then
+            echo "No C# files changed after formatting."
+            exit 0
+          fi
+
+          echo "$CHANGED" | xargs git add
+          git commit -m "chore: apply dotnet format"
+          git push \
+            "https://x-access-token:${GH_TOKEN}@github.com/${{ matrix.repo.owner }}/${{ matrix.repo.name }}.git" \
+            "$BRANCH"
+
+          PR_BODY="Automated application of \`dotnet format\` using the \`.editorconfig\` from [cs-editorconfig](https://github.com/${SOURCE_REPO})."
+
+          gh pr create \
+            --repo "${{ matrix.repo.owner }}/${{ matrix.repo.name }}" \
+            --head "$BRANCH" \
+            --base "${{ matrix.repo.defaultBranch }}" \
+            --title "chore: apply dotnet format" \
+            --body "$PR_BODY"
