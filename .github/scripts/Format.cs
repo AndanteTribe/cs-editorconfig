@@ -59,6 +59,11 @@ static async Task<bool> ProcessRepositoryWithLogging(
         await ProcessRepository(client, repo, branchName, token, sourceRepo);
         return true;
     }
+    catch (ForbiddenException ex)
+    {
+        Console.WriteLine($"::error::Skipping {repo.FullName}: the GitHub App lacks write permission for this repository. Grant 'Contents: read and write' in the App installation settings. Details: {ex.Message}");
+        return false;
+    }
     catch (Exception ex)
     {
         Console.WriteLine($"::error::Failed to process {repo.FullName}: {ex.Message}");
