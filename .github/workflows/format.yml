@@ -36,5 +36,4 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           SOURCE_REPO: ${{ github.repository }}
-          COMMIT_SHA: ${{ github.sha }}
         run: dotnet run .github/scripts/Format.cs -c Release

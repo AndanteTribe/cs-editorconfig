@@ -12,14 +12,7 @@ var token = Environment.GetEnvironmentVariable("GH_TOKEN")
     ?? throw new InvalidOperationException("GH_TOKEN is not set.");
 var sourceRepo = Environment.GetEnvironmentVariable("SOURCE_REPO")
     ?? throw new InvalidOperationException("SOURCE_REPO is not set.");
-var commitSha = Environment.GetEnvironmentVariable("COMMIT_SHA")
-    ?? throw new InvalidOperationException("COMMIT_SHA is not set.");
-
-var branchName = string.Create(FilePaths.BranchPrefix.Length + 7, commitSha, static (span, sha) =>
-{
-    FilePaths.BranchPrefix.AsSpan().CopyTo(span);
-    sha.AsSpan()[..7].CopyTo(span[FilePaths.BranchPrefix.Length..]);
-});
+var branchName = FilePaths.BranchPrefix + DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmssfff");
 
 var client = new GitHubClient(new ProductHeaderValue("cs-editorconfig-formatter"))
 {
@@ -28,7 +21,7 @@ var client = new GitHubClient(new ProductHeaderValue("cs-editorconfig-formatter"
 
 var installationRepos = await client.GitHubApps.Installation.GetAllRepositoriesForCurrent();
 var changed = false;
-var tasks = new List<Task>();
+var tasks = new List<Task>(installationRepos.Repositories.Count);
 
 foreach (var repo in installationRepos.Repositories)
 {
@@ -215,8 +208,8 @@ static async Task<(int ExitCode, string Stdout, string Stderr)> RunCoreAsync(
     process.Start();
     var stdoutTask = process.StandardOutput.ReadToEndAsync();
     var stderrTask = process.StandardError.ReadToEndAsync();
-    await process.WaitForExitAsync();
-    return (process.ExitCode, await stdoutTask, await stderrTask);
+    await Task.WhenAll(process.WaitForExitAsync(), stdoutTask, stderrTask);
+    return (process.ExitCode, stdoutTask.Result, stderrTask.Result);
 }
 
 static class FilePaths
