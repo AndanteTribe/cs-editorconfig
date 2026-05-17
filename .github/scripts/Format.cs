@@ -25,7 +25,7 @@ var tasks = new List<Task<bool>>(installationRepos.Repositories.Count);
 
 foreach (var repo in installationRepos.Repositories)
 {
-    if (repo.FullName == sourceRepo)
+    if (repo.FullName == sourceRepo || repo.Archived)
     {
         continue;
     }
@@ -46,6 +46,8 @@ else if (results.Any(static success => !success))
     return 1;
 }
 
+return 0;
+
 static async Task<bool> ProcessRepositoryWithLogging(
     GitHubClient client,
     Repository repo,
@@ -59,14 +61,9 @@ static async Task<bool> ProcessRepositoryWithLogging(
         await ProcessRepository(client, repo, branchName, token, sourceRepo);
         return true;
     }
-    catch (ForbiddenException ex)
-    {
-        Console.WriteLine($"::error::Skipping {repo.FullName}: the GitHub App lacks write permission for this repository. Grant 'Contents: read and write' in the App installation settings. Details: {ex.Message}");
-        return false;
-    }
     catch (Exception ex)
     {
-        Console.WriteLine($"::error::Failed to process {repo.FullName}: {ex.Message}");
+        Console.Error.WriteLine($"::error::Failed to process {repo.FullName}: {ex}");
         return false;
     }
     finally
