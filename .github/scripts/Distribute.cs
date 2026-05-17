@@ -35,7 +35,7 @@ var editorConfigContent = await readEditorConfigTask;
 var gitAttributesContent = await readGitAttributesTask;
 var installationRepos = await getInstallationReposTask;
 var changed = false;
-var tasks = new List<Task>();
+var tasks = new List<Task>(installationRepos.Repositories.Count);
 
 foreach (var repo in installationRepos.Repositories)
 {
