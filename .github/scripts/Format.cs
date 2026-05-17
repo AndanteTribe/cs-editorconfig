@@ -1,10 +1,12 @@
 #:package Octokit@14.*
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Octokit;
 
@@ -21,6 +23,7 @@ var client = new GitHubClient(new ProductHeaderValue("cs-editorconfig-formatter"
 
 var installationRepos = await client.GitHubApps.Installation.GetAllRepositoriesForCurrent();
 var changed = false;
+var unityRepos = new ConcurrentBag<UnityRepoInfo>();
 var tasks = new List<Task>(installationRepos.Repositories.Count);
 
 foreach (var repo in installationRepos.Repositories)
@@ -31,12 +34,22 @@ foreach (var repo in installationRepos.Repositories)
     }
 
     changed = true;
-    tasks.Add(ProcessRepositoryWithLogging(client, repo, branchName, token, sourceRepo));
+    tasks.Add(ProcessRepositoryWithLogging(client, repo, branchName, token, sourceRepo, unityRepos));
 }
 
 await Task.WhenAll(tasks);
 
-if (!changed)
+var unityReposList = unityRepos.ToArray();
+if (unityReposList.Length > 0)
+{
+    var json = JsonSerializer.Serialize(unityReposList, JsonSerializerOptions.Web);
+    // JsonSerializerOptions.Web serialises PascalCase record properties as camelCase
+    // (e.g. UnityProjectPath → unityProjectPath), which is the form consumed by the
+    // matrix strategy in the format-unity workflow job.
+    await File.WriteAllTextAsync(FilePaths.UnityReposFile, json);
+    Console.WriteLine($"Found {unityReposList.Length} Unity project(s) to format separately.");
+}
+else if (!changed)
 {
     Console.WriteLine("No repositories to format.");
 }
@@ -46,12 +59,13 @@ static async Task ProcessRepositoryWithLogging(
     Repository repo,
     string branchName,
     string token,
-    string sourceRepo)
+    string sourceRepo,
+    ConcurrentBag<UnityRepoInfo> unityRepos)
 {
     Console.WriteLine("::group::Processing " + repo.FullName);
     try
     {
-        await ProcessRepository(client, repo, branchName, token, sourceRepo);
+        await ProcessRepository(client, repo, branchName, token, sourceRepo, unityRepos);
     }
     finally
     {
@@ -64,7 +78,8 @@ static async Task ProcessRepository(
     Repository repo,
     string branchName,
     string token,
-    string sourceRepo)
+    string sourceRepo,
+    ConcurrentBag<UnityRepoInfo> unityRepos)
 {
     var owner = repo.Owner.Login;
     var name = repo.Name;
@@ -80,6 +95,17 @@ static async Task ProcessRepository(
         // (emit repo list → dynamic matrix), which adds significant complexity for no practical gain.
         var cloneUrl = $"https://x-access-token:{token}@github.com/{owner}/{name}.git";
         await RunAsync("git", ["clone", "--depth=1", cloneUrl, "."], tempDir);
+
+        // Unity projects cannot be formatted directly because their .csproj files are generated
+        // by the Unity Editor and are not committed to the repository.
+        // Detect such projects and defer them to the format-unity workflow job.
+        var unityProjectPath = FindUnityProjectPath(tempDir);
+        if (unityProjectPath != null)
+        {
+            Console.WriteLine($"Unity project detected at '{unityProjectPath}'. Deferring to Unity-specific formatting job.");
+            unityRepos.Add(new UnityRepoInfo(owner, name, unityProjectPath, repo.DefaultBranch));
+            return;
+        }
 
         // Exit code 0 = no changes needed, 2 = changes needed, other = error (e.g. no project files)
         var verifyExitCode = await RunAndGetExitCodeAsync(
@@ -188,6 +214,24 @@ static async Task<string> RunAndGetOutputAsync(string command, string[] args, st
     return stdout;
 }
 
+static string? FindUnityProjectPath(string dir)
+{
+    // A Unity project is identified by the presence of ProjectSettings/ProjectVersion.txt.
+    foreach (var file in Directory.EnumerateFiles(dir, "ProjectVersion.txt", SearchOption.AllDirectories))
+    {
+        var settingsDir = Path.GetDirectoryName(file);
+        if (settingsDir != null &&
+            Path.GetFileName(settingsDir).Equals("ProjectSettings", StringComparison.OrdinalIgnoreCase))
+        {
+            var projectDir = Path.GetDirectoryName(settingsDir)!;
+            var relativePath = Path.GetRelativePath(dir, projectDir);
+            // Return empty string when the Unity project is at the repository root.
+            return relativePath == "." ? string.Empty : relativePath;
+        }
+    }
+    return null;
+}
+
 static async Task<(int ExitCode, string Stdout, string Stderr)> RunCoreAsync(
     string command, string[] args, string workingDirectory)
 {
@@ -215,4 +259,7 @@ static async Task<(int ExitCode, string Stdout, string Stderr)> RunCoreAsync(
 static class FilePaths
 {
     public const string BranchPrefix = "feature/dotnet-format-";
+    public const string UnityReposFile = "unity-repos.json";
 }
+
+record UnityRepoInfo(string Owner, string Name, string UnityProjectPath, string DefaultBranch);
