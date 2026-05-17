@@ -80,6 +80,11 @@ static async Task ProcessRepository(
 
     try
     {
+        // `dotnet format` requires the target repo to be present on the local filesystem.
+        // Because the repos to process are discovered dynamically at runtime from the GitHub App
+        // installation API, we must clone and format each repo inside this loop.
+        // Moving `dotnet format` to the workflow level would require a two-step design
+        // (emit repo list → dynamic matrix), which adds significant complexity for no practical gain.
         var cloneUrl = $"https://x-access-token:{token}@github.com/{owner}/{name}.git";
         await RunAsync("git", ["clone", "--depth=1", cloneUrl, "."], tempDir);
 
