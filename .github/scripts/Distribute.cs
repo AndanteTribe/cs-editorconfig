@@ -39,7 +39,7 @@ var tasks = new List<Task>(installationRepos.Repositories.Count);
 
 foreach (var repo in installationRepos.Repositories)
 {
-    if (repo.FullName == sourceRepo)
+    if (repo.FullName == sourceRepo || repo.Archived)
     {
         continue;
     }
