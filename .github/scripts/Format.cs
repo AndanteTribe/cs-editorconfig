@@ -21,7 +21,7 @@ var client = new GitHubClient(new ProductHeaderValue("cs-editorconfig-formatter"
 
 var installationRepos = await client.GitHubApps.Installation.GetAllRepositoriesForCurrent();
 var changed = false;
-var tasks = new List<Task>(installationRepos.Repositories.Count);
+var tasks = new List<Task<bool>>(installationRepos.Repositories.Count);
 
 foreach (var repo in installationRepos.Repositories)
 {
@@ -34,14 +34,19 @@ foreach (var repo in installationRepos.Repositories)
     tasks.Add(ProcessRepositoryWithLogging(client, repo, branchName, token, sourceRepo));
 }
 
-await Task.WhenAll(tasks);
+var results = await Task.WhenAll(tasks);
 
 if (!changed)
 {
     Console.WriteLine("No repositories to format.");
 }
+else if (results.Any(static success => !success))
+{
+    Console.Error.WriteLine("One or more repositories failed to process. See the log above for details.");
+    return 1;
+}
 
-static async Task ProcessRepositoryWithLogging(
+static async Task<bool> ProcessRepositoryWithLogging(
     GitHubClient client,
     Repository repo,
     string branchName,
@@ -52,6 +57,12 @@ static async Task ProcessRepositoryWithLogging(
     try
     {
         await ProcessRepository(client, repo, branchName, token, sourceRepo);
+        return true;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"::error::Failed to process {repo.FullName}: {ex.Message}");
+        return false;
     }
     finally
     {
