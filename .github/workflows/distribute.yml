@@ -17,21 +17,24 @@ jobs:
         # APP_OWNER must be a JSON array, e.g. ["OrgA","OrgB"]. Falls back to the repo owner when not set.
         owner: ${{ fromJson(vars.APP_OWNER || format('["{0}"]', github.repository_owner)) }}
     steps:
-      - uses: actions/checkout@v6
-
+      # ghasec-ignore: unpinned-action
+      - uses: AndanteTribe/Actions/actions/checkout@main # zizmor: ignore[unpinned-uses] repository-local action reference is intentionally tracked on @main
       - name: Generate GitHub App Token
         id: app-token
-        uses: actions/create-github-app-token@v3
+        # ghasec-ignore: unpinned-action
+        uses: AndanteTribe/Actions/actions/create-github-app-token@main # zizmor: ignore[unpinned-uses] repository-local action reference is intentionally tracked on @main
         with:
           client-id: ${{ secrets.BOT_CLIENT_ID }}
           private-key: ${{ secrets.PRIVATE_KEY }}
           owner: ${{ matrix.owner }}
-
+          permission-contents: write
+          permission-pull-requests: write
+          permission-metadata: read
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        # ghasec-ignore: unpinned-action
+        uses: AndanteTribe/Actions/actions/setup-dotnet@main # zizmor: ignore[unpinned-uses] repository-local action reference is intentionally tracked on @main
         with:
           dotnet-version: '10.x'
-
       - name: Distribute EditorConfig to Repositories
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
