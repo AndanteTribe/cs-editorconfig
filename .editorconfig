@@ -26,7 +26,7 @@ insert_final_newline = false
 # C# files
 [*.cs]
 
-# コードスタイル診断をビルド時も一括でエラーにする。
+# コードスタイル診断を一括でエラー扱いにする（ビルドで有効化するには EnforceCodeStyleInBuild=true 等の MSBuild 設定が別途必要）.
 dotnet_analyzer_diagnostic.category-Style.severity = error
 
 #### C# 命名規則 ####
@@ -112,7 +112,7 @@ csharp_style_expression_bodied_methods = true:suggestion
 dotnet_diagnostic.IDE0022.severity = suggestion
 
 # IDE0023 or 24: 変換演算子・演算子に式本体を使用する.
-csharp_style_expression_bodied_operators =true:error
+csharp_style_expression_bodied_operators = true:error
 
 # IDE0025: プロパティに式本体を使用する.
 csharp_style_expression_bodied_properties = true:error
@@ -128,7 +128,7 @@ dotnet_style_collection_initializer = true:error
 dotnet_style_prefer_collection_expression = true:error
 
 # IDE0029 or 30: Null チェックを簡略化. ※Unityのnullチェックに引っ掛かったら変更.
-dotnet_style_coalesce_expression =true:error
+dotnet_style_coalesce_expression = true:error
 
 # IDE0031: null 値の反映を使用する.
 dotnet_style_null_propagation = true:error
@@ -260,7 +260,7 @@ csharp_using_directive_placement = outside_namespace:error
 csharp_style_prefer_switch_expression = true:error
 
 # IDE0071: 補間を簡略化する.
-dotnet_style_prefer_simplified_interpolation =true:error
+dotnet_style_prefer_simplified_interpolation = true:error
 
 # IDE0072: switch 式への不足ケースの追加は提案に留める.
 dotnet_diagnostic.IDE0072.severity = suggestion
